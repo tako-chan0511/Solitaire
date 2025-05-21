@@ -32,7 +32,7 @@ interface CardType {
   faceUp: boolean;
 }
 
-const props = defineProps<{
+defineProps<{
   /** この山に積まれたカード配列 */
   cards: CardType[];
   /** カード同士の重なり幅 (px) */
