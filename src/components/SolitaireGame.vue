@@ -88,8 +88,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from "vue";
+import { ref, watch, computed, nextTick } from "vue";
 import Card from "./Card.vue";
+import { gsap } from "gsap";
+import { Flip } from "gsap/Flip";
+
+gsap.registerPlugin(Flip);
 
 type Suit = "S" | "H" | "D" | "C";
 interface CardType {
@@ -97,7 +101,6 @@ interface CardType {
   rank: number;
   faceUp: boolean;
 }
-// 履歴スナップショット型
 interface Snapshot {
   stock: CardType[];
   waste: CardType[];
@@ -105,7 +108,7 @@ interface Snapshot {
   tableaus: CardType[][];
 }
 
-// --- 1. 完了カード置き場選択用 ---
+// 完了カード置き場選択
 const selectedFoundation = ref<number | null>(null);
 function selectFoundation(i: number) {
   if (foundations.value[i].length > 0) {
@@ -113,7 +116,7 @@ function selectFoundation(i: number) {
   }
 }
 
-// --- デッキ生成／シャッフル ---
+// デッキ生成／シャッフル
 function createDeck(): CardType[] {
   const suits: Suit[] = ["S", "H", "D", "C"];
   const deck: CardType[] = [];
@@ -131,13 +134,13 @@ function shuffle(deck: CardType[]) {
   }
 }
 
-// --- リアクティブな状態 ---
+// リアクティブな状態
 const stock = ref<CardType[]>([]);
 const waste = ref<CardType[]>([]);
 const foundations = ref<CardType[][]>([[], [], [], []]);
 const tableaus = ref<CardType[][]>([[], [], [], [], [], [], []]);
 
-// --- 履歴スタック & 操作前履歴保存 ---
+// 履歴管理
 const historyStack = ref<Snapshot[]>([]);
 function saveHistory() {
   historyStack.value.push({
@@ -160,7 +163,7 @@ function undo() {
   tableaus.value = prev.tableaus.map((col) => col.map((c) => ({ ...c })));
 }
 
-// --- ゲーム初期化 ---
+// 初期化
 function initGame() {
   const deck = createDeck();
   shuffle(deck);
@@ -180,7 +183,7 @@ function initGame() {
 }
 initGame();
 
-// --- 移動可能判定 ---
+// 判定ヘルパー
 function canMoveToFound(pile: CardType[], c: CardType) {
   if (!pile.length) return c.rank === 1;
   const top = pile[pile.length - 1];
@@ -193,21 +196,24 @@ function canMoveToTab(pile: CardType[], c: CardType) {
   return isRed(top.suit) !== isRed(c.suit) && top.rank === c.rank + 1;
 }
 
-// --- 自動完了条件 ---
+// 自動完了ボタン有効判定
 const canAutoComplete = computed(() => {
-  const noStock = stock.value.length === 0;
-  const allTableauFaceUp = tableaus.value.every((col) =>
-    col.every((card) => card.faceUp)
+  return (
+    stock.value.length === 0 &&
+    tableaus.value.every((col) => col.every((card) => card.faceUp))
   );
-  return noStock && allTableauFaceUp;
 });
 
-// --- 自動完了処理 ---
-function autoMoveToFoundation() {
+// GSAP Flip を利用したアニメーション付き自動完了
+async function autoMoveToFoundation() {
+  // アニメーション前の位置をキャプチャ
+  const state = Flip.getState(".card");
+
+  // カード移動ロジック
   let moved: boolean;
   do {
     moved = false;
-    // (1) waste → foundation
+    // waste → foundation
     if (waste.value.length) {
       const c = waste.value[waste.value.length - 1];
       for (let fi = 0; fi < 4; fi++) {
@@ -221,8 +227,7 @@ function autoMoveToFoundation() {
       }
     }
     if (moved) continue;
-
-    // (2) tableau → foundation
+    // tableau → foundation
     for (let ci = 0; ci < tableaus.value.length; ci++) {
       const col = tableaus.value[ci];
       if (!col.length) continue;
@@ -240,9 +245,18 @@ function autoMoveToFoundation() {
       if (moved) break;
     }
   } while (moved);
+
+  // DOM 更新後に Flip アニメーションを実行
+  await nextTick();
+  Flip.from(state, {
+    duration: 0.6,
+    ease: "power1.inOut",
+    absolute: true,
+    nested: true,
+  });
 }
 
-// --- ストックめくり＆自動リサイクル ---
+// ストックめくり＆リサイクル
 function drawFromStock() {
   beforeAction();
   if (stock.value.length) {
@@ -257,6 +271,7 @@ function drawFromStock() {
     }
   }
 }
+// さらに watch でも補完
 watch(stock, (newStock) => {
   if (newStock.length === 0 && waste.value.length > 0) {
     while (waste.value.length) {
@@ -267,7 +282,7 @@ watch(stock, (newStock) => {
   }
 });
 
-// --- ワースト→ファンデーション 移動 ---
+// ワーストクリック
 function moveWasteToFoundation(fi: number) {
   if (!waste.value.length) return;
   beforeAction();
@@ -281,14 +296,12 @@ function onWasteClick() {
   if (!waste.value.length) return;
   beforeAction();
   const c = waste.value[waste.value.length - 1];
-  // foundation 優先
   for (let i = 0; i < 4; i++) {
     if (canMoveToFound(foundations.value[i], c)) {
       moveWasteToFoundation(i);
       return;
     }
   }
-  // tableau
   for (let i = 0; i < 7; i++) {
     if (canMoveToTab(tableaus.value[i], c)) {
       waste.value.pop();
@@ -298,16 +311,9 @@ function onWasteClick() {
   }
 }
 
-// --- 場札クリック／完了カード置き場→場札移動対応 ---
+// 場札クリック
 function onTableauClick(ci: number, ri: number) {
-  // const col1 = tableaus.value[ci];
-  // // 空列なら何もしない
-  // if (!col1.length) return;
-
-  // const seq1 = col.slice(ri);
-  // // 切り出したシーケンスが空、または先頭カードが表向きでなければ何もしない
-  // if (!seq1.length || !seq1[0].faceUp) return;
-  // (1) 完了カード置き場から戻す
+  // 完了置き場から戻す
   if (selectedFoundation.value !== null) {
     const fi = selectedFoundation.value;
     const pile = foundations.value[fi];
@@ -320,13 +326,11 @@ function onTableauClick(ci: number, ri: number) {
     selectedFoundation.value = null;
     return;
   }
-
-  // (2) 通常移動
+  // 通常移動
   const col = tableaus.value[ci];
   const seq = col.slice(ri);
   if (!seq[0].faceUp) return;
   beforeAction();
-
   // foundation へ１枚
   if (seq.length === 1) {
     for (let i = 0; i < 4; i++) {
@@ -340,7 +344,7 @@ function onTableauClick(ci: number, ri: number) {
       }
     }
   }
-  // 他テーブルへ
+  // 他 tableau
   for (let ti = 0; ti < 7; ti++) {
     if (ti === ci) continue;
     if (canMoveToTab(tableaus.value[ti], seq[0])) {

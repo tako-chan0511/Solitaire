@@ -16,25 +16,30 @@ interface CardType {
   rank: number;
 }
 
-// `faceDown` が true のときに裏面を描画
-const props = defineProps<{
+// Props を分割して受け取る
+const { card, faceDown = false } = defineProps<{
   card: CardType;
   faceDown?: boolean;
 }>();
 
+// マークを決定
 const suitSymbol = computed(() => {
-  return { S: "♠", H: "♥", D: "♦", C: "♣" }[props.card.suit];
+  return { S: "♠", H: "♥", D: "♦", C: "♣" }[card.suit];
 });
+
+// ランク表示
 const rankDisplay = computed(() => {
-  const r = props.card.rank;
+  const r = card.rank;
   if (r === 1) return "A";
   if (r === 11) return "J";
   if (r === 12) return "Q";
   if (r === 13) return "K";
   return r.toString();
 });
+
+// 色クラス (赤か黒)
 const suitClass = computed(() =>
-  props.card.suit === "H" || props.card.suit === "D" ? "red" : "black"
+  card.suit === "H" || card.suit === "D" ? "red" : "black"
 );
 </script>
 
@@ -64,7 +69,6 @@ const suitClass = computed(() =>
   font-size: 1.4em;
   line-height: 0.8;
 }
-
 /* 裏面用の強い色彩パターン */
 .card.back {
   border: 1px solid #003300;
