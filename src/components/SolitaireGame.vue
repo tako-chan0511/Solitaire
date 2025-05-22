@@ -6,6 +6,10 @@
       <button @click="undo" :disabled="historyStack.length <= 1">
         一つ戻す
       </button>
+      <!-- 自動完了ボタン：条件付きで有効化 -->
+      <button @click="autoMoveToFoundation" :disabled="!canAutoComplete">
+        自動完了
+      </button>
     </div>
 
     <!-- 上部：ストック／ワースト／ファンデーション -->
@@ -84,7 +88,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref, watch, computed } from "vue";
 import Card from "./Card.vue";
 
 type Suit = "S" | "H" | "D" | "C";
@@ -104,7 +108,6 @@ interface Snapshot {
 // --- 1. 完了カード置き場選択用 ---
 const selectedFoundation = ref<number | null>(null);
 function selectFoundation(i: number) {
-  // 既にカードがある山だけを選択可能に
   if (foundations.value[i].length > 0) {
     selectedFoundation.value = i;
   }
@@ -161,7 +164,6 @@ function undo() {
 function initGame() {
   const deck = createDeck();
   shuffle(deck);
-  // テーブルに配る
   tableaus.value = [[], [], [], [], [], [], []];
   for (let i = 0; i < 7; i++) {
     for (let j = 0; j <= i; j++) {
@@ -170,7 +172,6 @@ function initGame() {
       tableaus.value[i].push(c);
     }
   }
-  // 残りは山札
   stock.value = deck;
   waste.value = [];
   foundations.value = [[], [], [], []];
@@ -178,47 +179,6 @@ function initGame() {
   saveHistory();
 }
 initGame();
-
-// --- ストックめくり＆自動リサイクル ---
-function drawFromStock() {
-  beforeAction();
-  if (stock.value.length) {
-    const c = stock.value.pop()!;
-    c.faceUp = true;
-    waste.value.push(c);
-  } else {
-    // 空になったら waste を自動でリサイクル
-    while (waste.value.length) {
-      const c = waste.value.pop()!;
-      c.faceUp = false;
-      stock.value.push(c);
-    }
-  }
-}
-// さらに watch でも自動リサイクルを担保
-watch(stock, (newStock) => {
-  if (newStock.length === 0 && waste.value.length > 0) {
-    while (waste.value.length) {
-      const c = waste.value.pop()!;
-      c.faceUp = false;
-      stock.value.push(c);
-    }
-  }
-});
-
-// --- tableau 全表向き時にも自動リサイクル ---
-watch(
-  () => tableaus.value.every((col) => col.every((card) => card.faceUp)),
-  (allFlipped) => {
-    if (allFlipped && waste.value.length) {
-      while (waste.value.length) {
-        const c = waste.value.pop()!;
-        c.faceUp = false;
-        stock.value.push(c);
-      }
-    }
-  }
-);
 
 // --- 移動可能判定 ---
 function canMoveToFound(pile: CardType[], c: CardType) {
@@ -232,6 +192,80 @@ function canMoveToTab(pile: CardType[], c: CardType) {
   const isRed = (s: Suit) => s === "H" || s === "D";
   return isRed(top.suit) !== isRed(c.suit) && top.rank === c.rank + 1;
 }
+
+// --- 自動完了条件 ---
+const canAutoComplete = computed(() => {
+  const noStock = stock.value.length === 0;
+  const allTableauFaceUp = tableaus.value.every((col) =>
+    col.every((card) => card.faceUp)
+  );
+  return noStock && allTableauFaceUp;
+});
+
+// --- 自動完了処理 ---
+function autoMoveToFoundation() {
+  let moved: boolean;
+  do {
+    moved = false;
+    // (1) waste → foundation
+    if (waste.value.length) {
+      const c = waste.value[waste.value.length - 1];
+      for (let fi = 0; fi < 4; fi++) {
+        if (canMoveToFound(foundations.value[fi], c)) {
+          beforeAction();
+          waste.value.pop();
+          foundations.value[fi].push(c);
+          moved = true;
+          break;
+        }
+      }
+    }
+    if (moved) continue;
+
+    // (2) tableau → foundation
+    for (let ci = 0; ci < tableaus.value.length; ci++) {
+      const col = tableaus.value[ci];
+      if (!col.length) continue;
+      const c = col[col.length - 1];
+      if (!c.faceUp) continue;
+      for (let fi = 0; fi < 4; fi++) {
+        if (canMoveToFound(foundations.value[fi], c)) {
+          beforeAction();
+          col.pop();
+          foundations.value[fi].push(c);
+          moved = true;
+          break;
+        }
+      }
+      if (moved) break;
+    }
+  } while (moved);
+}
+
+// --- ストックめくり＆自動リサイクル ---
+function drawFromStock() {
+  beforeAction();
+  if (stock.value.length) {
+    const c = stock.value.pop()!;
+    c.faceUp = true;
+    waste.value.push(c);
+  } else {
+    while (waste.value.length) {
+      const c = waste.value.pop()!;
+      c.faceUp = false;
+      stock.value.push(c);
+    }
+  }
+}
+watch(stock, (newStock) => {
+  if (newStock.length === 0 && waste.value.length > 0) {
+    while (waste.value.length) {
+      const c = waste.value.pop()!;
+      c.faceUp = false;
+      stock.value.push(c);
+    }
+  }
+});
 
 // --- ワースト→ファンデーション 移動 ---
 function moveWasteToFoundation(fi: number) {
@@ -247,14 +281,14 @@ function onWasteClick() {
   if (!waste.value.length) return;
   beforeAction();
   const c = waste.value[waste.value.length - 1];
-  // ファンデーション優先
+  // foundation 優先
   for (let i = 0; i < 4; i++) {
     if (canMoveToFound(foundations.value[i], c)) {
       moveWasteToFoundation(i);
       return;
     }
   }
-  // それ以外は tableau
+  // tableau
   for (let i = 0; i < 7; i++) {
     if (canMoveToTab(tableaus.value[i], c)) {
       waste.value.pop();
@@ -266,7 +300,14 @@ function onWasteClick() {
 
 // --- 場札クリック／完了カード置き場→場札移動対応 ---
 function onTableauClick(ci: number, ri: number) {
-  // ① 完了カード置き場を選択中なら、そこから場札へ移動
+  // const col1 = tableaus.value[ci];
+  // // 空列なら何もしない
+  // if (!col1.length) return;
+
+  // const seq1 = col.slice(ri);
+  // // 切り出したシーケンスが空、または先頭カードが表向きでなければ何もしない
+  // if (!seq1.length || !seq1[0].faceUp) return;
+  // (1) 完了カード置き場から戻す
   if (selectedFoundation.value !== null) {
     const fi = selectedFoundation.value;
     const pile = foundations.value[fi];
@@ -279,12 +320,14 @@ function onTableauClick(ci: number, ri: number) {
     selectedFoundation.value = null;
     return;
   }
-  // ② 通常の tableau 間移動
+
+  // (2) 通常移動
   const col = tableaus.value[ci];
   const seq = col.slice(ri);
   if (!seq[0].faceUp) return;
   beforeAction();
-  // Foundation へ１枚移動
+
+  // foundation へ１枚
   if (seq.length === 1) {
     for (let i = 0; i < 4; i++) {
       if (canMoveToFound(foundations.value[i], seq[0])) {
@@ -297,7 +340,7 @@ function onTableauClick(ci: number, ri: number) {
       }
     }
   }
-  // 他の tableau へ
+  // 他テーブルへ
   for (let ti = 0; ti < 7; ti++) {
     if (ti === ci) continue;
     if (canMoveToTab(tableaus.value[ti], seq[0])) {
