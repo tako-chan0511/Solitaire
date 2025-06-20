@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) navigator.serviceWorker.register('/Solitaire/dev-sw.js?dev-sw', { scope: '/Solitaire/', type: 'classic' })
