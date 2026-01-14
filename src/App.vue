@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <h1>Vue3 ソリティア</h1>
+    <h1>Vue3 ソリティアクラッシク</h1>
     <SolitaireGame />
   </div>
 </template>
